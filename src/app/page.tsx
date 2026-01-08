@@ -108,13 +108,11 @@ export default function Home() {
     const cv = cvRef.current;
     const cascadePath = "haarcascade_frontalface_default.xml";
     try {
-        // ลองเช็คว่าไฟล์มีใน virtual system หรือยัง
         cv.FS_stat(cascadePath);
         const faceCascade = new cv.CascadeClassifier();
         faceCascade.load(cascadePath);
         faceCascadeRef.current = faceCascade;
     } catch {
-        // ถ้ายังไม่มี ให้โหลดจาก public folder
         const res = await fetch("/opencv/haarcascade_frontalface_default.xml");
         if (!res.ok) throw new Error("Cascade Missing");
         const data = new Uint8Array(await res.arrayBuffer());
@@ -126,9 +124,19 @@ export default function Home() {
   }
 
   async function loadModel() {
-    // เพิ่ม try-catch ย่อยเพื่อให้ debug ง่ายขึ้น
     try {
-        const session = await ort.InferenceSession.create("/models/emotion_yolo11n_cls.onnx", { executionProviders: ["wasm"] });
+        // [FIXED] ตั้งค่าตำแหน่งไฟล์ WASM ให้ถูกต้อง
+        // ต้องมั่นใจว่าไฟล์ .wasm อยู่ในโฟลเดอร์ public/onnx/
+        ort.env.wasm.wasmPaths = "/onnx/"; 
+        
+        // [OPTIONAL] ปิด Multithreading ชั่วคราวเพื่อความเสถียร (ถ้าไม่มี Cross-Origin Headers)
+        ort.env.wasm.numThreads = 1; 
+
+        // สร้าง Session
+        const session = await ort.InferenceSession.create("/models/emotion_yolo11n_cls.onnx", { 
+            executionProviders: ["wasm"],
+        });
+        
         sessionRef.current = session;
         const clsRes = await fetch("/models/classes.json");
         if (!clsRes.ok) throw new Error("Classes JSON Missing");
@@ -149,7 +157,6 @@ export default function Home() {
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        // รอให้ metadata โหลดเสร็จก่อนเล่น
         await new Promise((resolve) => { 
             videoRef.current!.onloadedmetadata = () => resolve(true); 
         });
@@ -172,7 +179,6 @@ export default function Home() {
     ctx.drawImage(faceCanvas, 0, 0, size, size);
     const imgData = ctx.getImageData(0, 0, size, size).data;
     const float = new Float32Array(1 * 3 * size * size);
-    // CHW format
     let idx = 0;
     for (let c = 0; c < 3; c++) {
       for (let i = 0; i < size * size; i++) float[idx++] = imgData[i * 4 + c] / 255.0;
@@ -204,18 +210,15 @@ export default function Home() {
     if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
     if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
     
-    // [FIXED] 1. วาด Video ลง Canvas ก่อน ไม่งั้นจอดำ
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     let src: any, gray: any, faces: any;
     try {
-      // [FIXED] 2. อ่านภาพจาก Canvas (ที่มีภาพแล้ว) แทน Video โดยตรง
       src = cv.imread(canvas);
       gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
       faces = new cv.RectVector();
       
-      // Face detection
       faceCascade.detectMultiScale(gray, faces, 1.2, 5, 0, new cv.Size(64, 64));
 
       let bestRect: any = null;
@@ -227,12 +230,10 @@ export default function Home() {
       }
 
       if (bestRect) {
-        // Crop face
         const faceCanvas = document.createElement("canvas");
         faceCanvas.width = bestRect.width; faceCanvas.height = bestRect.height;
         faceCanvas.getContext("2d")!.drawImage(canvas, bestRect.x, bestRect.y, bestRect.width, bestRect.height, 0, 0, bestRect.width, bestRect.height);
 
-        // Predict
         const input = preprocessToTensor(faceCanvas);
         const feeds = { [session.inputNames[0]]: input };
         const out = await session.run(feeds);
@@ -246,7 +247,6 @@ export default function Home() {
         const predConf = probs[maxIdx] ?? 0;
         setEmotionData({ label: predLabel, conf: predConf });
 
-        // --- Cinematic Drawing ---
         const theme = getEmotionTheme(predLabel);
         const x = bestRect.x; const y = bestRect.y; const w = bestRect.width; const h = bestRect.height;
         
@@ -257,13 +257,9 @@ export default function Home() {
         
         const len = Math.min(w, h) / 4;
         ctx.beginPath();
-        // TL
         ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
-        // TR
         ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
-        // BR
         ctx.moveTo(x + w, y + h - len); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - len, y + h);
-        // BL
         ctx.moveTo(x + len, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - len);
         ctx.stroke();
 
@@ -274,7 +270,6 @@ export default function Home() {
     } catch (e) {
       console.warn("Loop error:", e);
     } finally {
-      // Memory cleanup สำคัญมากสำหรับ OpenCV.js
       if (src) src.delete(); 
       if (gray) gray.delete(); 
       if (faces) faces.delete();
@@ -310,7 +305,6 @@ export default function Home() {
       {/* --- Ambient Background --- */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,#1a1a1a,transparent_70%)]"></div>
-        {/* Dynamic Glow blob based on emotion */}
         <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60vw] h-[60vw] rounded-full bg-gradient-to-r ${currentTheme.gradient} opacity-5 blur-[120px] transition-all duration-1000`}></div>
       </div>
 
@@ -401,40 +395,40 @@ export default function Home() {
 
                 {/* 2. Confidence Visualization */}
                 <div className="space-y-4">
-                     <div className="flex justify-between items-end border-b border-white/5 pb-2">
-                         <span className="text-[10px] text-white/40 uppercase tracking-widest">Confidence</span>
-                         <span className="text-xl font-light text-white tabular-nums">
-                             {emotionData ? (emotionData.conf * 100).toFixed(0) : "0"}
-                             <span className="text-xs text-white/30 ml-1">%</span>
-                         </span>
-                     </div>
-                     {/* Segmented Bar */}
-                     <div className="flex gap-1 h-1.5 w-full">
-                         {[...Array(10)].map((_, i) => (
-                             <div 
-                                 key={i}
-                                 className={`flex-1 rounded-full transition-all duration-300 ${emotionData && (emotionData.conf * 10) > i ? `bg-gradient-to-r ${currentTheme.gradient} opacity-100` : 'bg-white/5'}`}
-                             ></div>
-                         ))}
-                     </div>
+                      <div className="flex justify-between items-end border-b border-white/5 pb-2">
+                          <span className="text-[10px] text-white/40 uppercase tracking-widest">Confidence</span>
+                          <span className="text-xl font-light text-white tabular-nums">
+                              {emotionData ? (emotionData.conf * 100).toFixed(0) : "0"}
+                              <span className="text-xs text-white/30 ml-1">%</span>
+                          </span>
+                      </div>
+                      {/* Segmented Bar */}
+                      <div className="flex gap-1 h-1.5 w-full">
+                          {[...Array(10)].map((_, i) => (
+                              <div 
+                                  key={i}
+                                  className={`flex-1 rounded-full transition-all duration-300 ${emotionData && (emotionData.conf * 10) > i ? `bg-gradient-to-r ${currentTheme.gradient} opacity-100` : 'bg-white/5'}`}
+                              ></div>
+                          ))}
+                      </div>
                 </div>
 
                 {/* 3. Tech Stats (Styled Box) */}
                 <div className="grid grid-cols-2 gap-3 pt-4">
-                     <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.05] flex flex-col justify-between h-24 hover:bg-white/[0.05] transition-colors">
-                         <div className="text-white/20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path fillRule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 010-1.113zM17.25 12a5.25 5.25 0 11-10.5 0 5.25 5.25 0 0110.5 0z" clipRule="evenodd" /></svg></div>
-                         <div>
-                             <div className="text-sm font-bold text-white/80">1280p</div>
-                             <div className="text-[9px] text-white/30 uppercase tracking-widest mt-0.5">Resolution</div>
-                         </div>
-                     </div>
-                     <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.05] flex flex-col justify-between h-24 hover:bg-white/[0.05] transition-colors">
-                         <div className="text-white/20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M3 6a3 3 0 013-3h12a3 3 0 013 3v12a3 3 0 01-3 3H6a3 3 0 01-3-3V6zm14.25 6a.75.75 0 01-.22.53l-2.25 2.25a.75.75 0 11-1.06-1.06L15.44 12l-1.72-1.72a.75.75 0 111.06-1.06l2.25 2.25c.141.14.22.331.22.53zm-10.28 0a.75.75 0 01.22-.53l2.25-2.25a.75.75 0 111.06 1.06L8.56 12l1.72 1.72a.75.75 0 11-1.06 1.06l-2.25-2.25a.75.75 0 01-.22-.53z" clipRule="evenodd" /></svg></div>
-                         <div>
-                             <div className="text-sm font-bold text-white/80">WASM</div>
-                             <div className="text-[9px] text-white/30 uppercase tracking-widest mt-0.5">Backend</div>
-                         </div>
-                     </div>
+                      <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.05] flex flex-col justify-between h-24 hover:bg-white/[0.05] transition-colors">
+                          <div className="text-white/20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path fillRule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 010-1.113zM17.25 12a5.25 5.25 0 11-10.5 0 5.25 5.25 0 0110.5 0z" clipRule="evenodd" /></svg></div>
+                          <div>
+                              <div className="text-sm font-bold text-white/80">1280p</div>
+                              <div className="text-[9px] text-white/30 uppercase tracking-widest mt-0.5">Resolution</div>
+                          </div>
+                      </div>
+                      <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.05] flex flex-col justify-between h-24 hover:bg-white/[0.05] transition-colors">
+                          <div className="text-white/20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M3 6a3 3 0 013-3h12a3 3 0 013 3v12a3 3 0 01-3 3H6a3 3 0 01-3-3V6zm14.25 6a.75.75 0 01-.22.53l-2.25 2.25a.75.75 0 11-1.06-1.06L15.44 12l-1.72-1.72a.75.75 0 111.06-1.06l2.25 2.25c.141.14.22.331.22.53zm-10.28 0a.75.75 0 01.22-.53l2.25-2.25a.75.75 0 111.06 1.06L8.56 12l1.72 1.72a.75.75 0 11-1.06 1.06l-2.25-2.25a.75.75 0 01-.22-.53z" clipRule="evenodd" /></svg></div>
+                          <div>
+                              <div className="text-sm font-bold text-white/80">WASM</div>
+                              <div className="text-[9px] text-white/30 uppercase tracking-widest mt-0.5">Backend</div>
+                          </div>
+                      </div>
                 </div>
 
             </div>

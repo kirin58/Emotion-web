@@ -125,14 +125,10 @@ export default function Home() {
 
   async function loadModel() {
     try {
-        // [FIXED] ตั้งค่าตำแหน่งไฟล์ WASM ให้ถูกต้อง
-        // ต้องมั่นใจว่าไฟล์ .wasm อยู่ในโฟลเดอร์ public/onnx/
         ort.env.wasm.wasmPaths = "/onnx/"; 
-        
-        // [OPTIONAL] ปิด Multithreading ชั่วคราวเพื่อความเสถียร (ถ้าไม่มี Cross-Origin Headers)
+        ort.env.wasm.proxy = true; 
         ort.env.wasm.numThreads = 1; 
 
-        // สร้าง Session
         const session = await ort.InferenceSession.create("/models/emotion_yolo11n_cls.onnx", { 
             executionProviders: ["wasm"],
         });
@@ -170,6 +166,24 @@ export default function Home() {
     }
   }
 
+  // --- NEW: Stop Camera Function ---
+  function stopCamera() {
+    if (loopIdRef.current) {
+        cancelAnimationFrame(loopIdRef.current);
+        loopIdRef.current = 0;
+    }
+    
+    if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+    }
+    
+    setIsCameraActive(false);
+    setEmotionData(null);
+    setInitStatus("System Ready");
+  }
+
   // --- Processing ---
   function preprocessToTensor(faceCanvas: HTMLCanvasElement) {
     const size = 64;
@@ -202,7 +216,7 @@ export default function Home() {
     const canvas = canvasRef.current;
 
     if (!cv || !faceCascade || !session || !classes || !video || !canvas || video.paused || video.ended) {
-      loopIdRef.current = requestAnimationFrame(loop);
+      if (isCameraActive) loopIdRef.current = requestAnimationFrame(loop);
       return;
     }
 
@@ -273,7 +287,7 @@ export default function Home() {
       if (src) src.delete(); 
       if (gray) gray.delete(); 
       if (faces) faces.delete();
-      loopIdRef.current = requestAnimationFrame(loop);
+      if (isCameraActive) loopIdRef.current = requestAnimationFrame(loop);
     }
   }
 
@@ -328,11 +342,9 @@ export default function Home() {
             {/* Video Canvas & Placeholder */}
             <div className="absolute inset-0 flex items-center justify-center">
                 
-                {/* Fixed Center Content for Loading/Error */}
                 {!isCameraActive && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center z-20 p-8 text-center bg-black/60 backdrop-blur-sm">
                         
-                        {/* Loading State */}
                         {isLoading && !errorMsg && (
                              <div className="flex flex-col items-center gap-4 animate-in fade-in duration-500">
                                  <div className="w-12 h-12 rounded-full border-[3px] border-white/10 border-t-white/80 animate-spin"></div>
@@ -340,17 +352,15 @@ export default function Home() {
                              </div>
                         )}
 
-                        {/* Ready State */}
                         {!isLoading && !errorMsg && (
                              <div className="flex flex-col items-center gap-4 animate-in zoom-in duration-300">
                                  <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center backdrop-blur-md shadow-[0_0_30px_-10px_rgba(255,255,255,0.1)]">
                                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-6 h-6 text-white/70"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
                                  </div>
-                                 <p className="text-xs font-mono text-white/40 tracking-widest uppercase">System Ready</p>
+                                 <p className="text-xs font-mono text-white/40 tracking-widest uppercase">{initStatus}</p>
                              </div>
                         )}
                         
-                        {/* Error State */}
                         {errorMsg && (
                             <div className="max-w-xs w-full p-6 bg-red-500/10 border border-red-500/20 rounded-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-5">
                                 <div className="flex flex-col items-center gap-3">
@@ -368,14 +378,12 @@ export default function Home() {
                 <canvas ref={canvasRef} className={`w-full h-full object-cover transition-opacity duration-700 ${isCameraActive ? 'opacity-100' : 'opacity-0'}`} />
             </div>
 
-            {/* Grid Overlay for texture */}
             <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:100px_100px] pointer-events-none opacity-20"></div>
         </div>
 
         {/* === RIGHT: Control Panel === */}
         <div className="w-full md:w-[360px] bg-[#0f0f0f] border-t md:border-t-0 md:border-l border-white/5 p-8 flex flex-col relative overflow-hidden">
             
-            {/* Subtle Gradient Glow inside Panel */}
             <div className={`absolute -top-[100px] -right-[100px] w-[300px] h-[300px] bg-gradient-to-b ${currentTheme.gradient} opacity-10 blur-[80px] rounded-full transition-colors duration-1000 pointer-events-none`}></div>
 
             <div className="flex-1 flex flex-col justify-center space-y-10 relative z-10">
@@ -388,7 +396,7 @@ export default function Home() {
                              {emotionData ? currentTheme.label : "Waiting"}
                          </h2>
                          <p className="text-xs text-white/40 font-medium tracking-wide mt-1 transition-all duration-500">
-                             {emotionData ? currentTheme.sub : "Please face the camera to begin"}
+                             {emotionData ? currentTheme.sub : isCameraActive ? "Looking for a face..." : "Please start the session"}
                          </p>
                     </div>
                 </div>
@@ -402,7 +410,6 @@ export default function Home() {
                               <span className="text-xs text-white/30 ml-1">%</span>
                           </span>
                       </div>
-                      {/* Segmented Bar */}
                       <div className="flex gap-1 h-1.5 w-full">
                           {[...Array(10)].map((_, i) => (
                               <div 
@@ -413,7 +420,7 @@ export default function Home() {
                       </div>
                 </div>
 
-                {/* 3. Tech Stats (Styled Box) */}
+                {/* 3. Tech Stats */}
                 <div className="grid grid-cols-2 gap-3 pt-4">
                       <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.05] flex flex-col justify-between h-24 hover:bg-white/[0.05] transition-colors">
                           <div className="text-white/20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path fillRule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 010-1.113zM17.25 12a5.25 5.25 0 11-10.5 0 5.25 5.25 0 0110.5 0z" clipRule="evenodd" /></svg></div>
@@ -433,21 +440,24 @@ export default function Home() {
 
             </div>
 
-            {/* Bottom: Action Button */}
+            {/* --- Action Buttons (Updated) --- */}
             <div className="mt-6">
-                <button
-                    disabled={isLoading || isCameraActive}
-                    onClick={startCamera}
-                    className={`
-                        w-full py-4 rounded-xl font-bold text-xs tracking-[0.2em] uppercase transition-all duration-300
-                        ${isCameraActive 
-                            ? 'bg-white/5 text-white/20 cursor-default border border-white/5' 
-                            : 'bg-white text-black hover:scale-[1.02] shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:shadow-[0_0_30px_rgba(255,255,255,0.4)]'
-                        }
-                    `}
-                >
-                    {isLoading ? "Loading..." : isCameraActive ? "Scanning Active" : "Start Experience"}
-                </button>
+                {!isCameraActive ? (
+                    <button
+                        disabled={isLoading}
+                        onClick={startCamera}
+                        className="w-full py-4 rounded-xl font-bold text-xs tracking-[0.2em] uppercase transition-all duration-300 bg-white text-black hover:scale-[1.02] shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:shadow-[0_0_30px_rgba(255,255,255,0.4)] disabled:opacity-50"
+                    >
+                        {isLoading ? "System Loading..." : "Start Experience"}
+                    </button>
+                ) : (
+                    <button
+                        onClick={stopCamera}
+                        className="w-full py-4 rounded-xl font-bold text-xs tracking-[0.2em] uppercase transition-all duration-300 bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:text-red-300"
+                    >
+                        Terminate Session
+                    </button>
+                )}
             </div>
 
         </div>

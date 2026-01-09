@@ -7,19 +7,81 @@ import * as ort from "onnxruntime-web";
 
 const getEmotionTheme = (emotion: string) => {
   const e = (emotion || "").toLowerCase();
+
   switch (e) {
     case "happy":
-      return { label: "happy", sub: "Positive Valence", gradient: "from-emerald-400 via-teal-300 to-cyan-300", shadow: "shadow-emerald-500/40", hex: "#34d399" };
+      return {
+        label: "happy",
+        sub: "Positive Valence",
+        gradient: "from-emerald-400 via-teal-300 to-cyan-300",
+        shadow: "shadow-emerald-500/40",
+        hex: "#34d399",
+      };
+
     case "sad":
-      return { label: "sad", sub: "Negative Valence", gradient: "from-blue-400 via-indigo-300 to-violet-400", shadow: "shadow-blue-500/40", hex: "#60a5fa" };
+      return {
+        label: "sad",
+        sub: "Negative Valence",
+        gradient: "from-blue-400 via-indigo-300 to-violet-400",
+        shadow: "shadow-blue-500/40",
+        hex: "#60a5fa",
+      };
+
     case "angry":
-      return { label: "angry", sub: "High Arousal", gradient: "from-red-500 via-rose-400 to-orange-400", shadow: "shadow-red-500/40", hex: "#f43f5e" };
+      return {
+        label: "angry",
+        sub: "High Arousal",
+        gradient: "from-red-500 via-rose-400 to-orange-400",
+        shadow: "shadow-red-500/40",
+        hex: "#f43f5e",
+      };
+
     case "surprise":
-      return { label: "surprise", sub: "Sudden Stimuli", gradient: "from-amber-300 via-yellow-300 to-orange-300", shadow: "shadow-amber-400/40", hex: "#fbbf24" };
+      return {
+        label: "surprise",
+        sub: "Sudden Stimuli",
+        gradient: "from-amber-300 via-yellow-300 to-orange-300",
+        shadow: "shadow-amber-400/40",
+        hex: "#fbbf24",
+      };
+
     case "neutral":
-      return { label: "neutral", sub: "Baseline State", gradient: "from-slate-200 via-gray-300 to-zinc-400", shadow: "shadow-white/20", hex: "#e2e8f0" };
+      return {
+        label: "neutral",
+        sub: "Baseline State",
+        gradient: "from-slate-200 via-gray-300 to-zinc-400",
+        shadow: "shadow-white/20",
+        hex: "#e2e8f0",
+      };
+
+    /* ====== เพิ่มใหม่ ====== */
+
+    case "fear":
+      return {
+        label: "fear",
+        sub: "Threat Response",
+        gradient: "from-purple-500 via-indigo-500 to-blue-600",
+        shadow: "shadow-purple-500/40",
+        hex: "#8b5cf6",
+      };
+
+    case "disgust":
+      return {
+        label: "disgust",
+        sub: "Aversive Reaction",
+        gradient: "from-lime-500 via-green-500 to-emerald-600",
+        shadow: "shadow-lime-500/40",
+        hex: "#84cc16",
+      };
+
     default:
-      return { label: "Scanning", sub: "Awaiting Input", gradient: "from-cyan-400 via-blue-400 to-indigo-400", shadow: "shadow-cyan-500/30", hex: "#22d3ee" };
+      return {
+        label: "Scanning",
+        sub: "Awaiting Input",
+        gradient: "from-cyan-400 via-blue-400 to-indigo-400",
+        shadow: "shadow-cyan-500/30",
+        hex: "#22d3ee",
+      };
   }
 };
 

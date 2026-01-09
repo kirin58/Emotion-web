@@ -3,8 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as ort from "onnxruntime-web";
 
-/* ================= THEME ================= */
-
 const getEmotionTheme = (emotion: string) => {
   const e = (emotion || "").toLowerCase();
 
@@ -53,8 +51,6 @@ const getEmotionTheme = (emotion: string) => {
         shadow: "shadow-white/20",
         hex: "#e2e8f0",
       };
-
-    /* ====== เพิ่มใหม่ ====== */
 
     case "fear":
       return {

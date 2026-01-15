@@ -92,17 +92,17 @@ export default function Home() {
   const classesRef = useRef<string[] | null>(null);
   const loopIdRef = useRef<number>(0);
 
-  // 🚀 ULTRA Performance Refs
+
   const processCanvasRef = useRef<HTMLCanvasElement | null>(null); 
   const lastDetectTimeRef = useRef(0);
   const cachedFaceRef = useRef<any>(null);
   
-  // ลดความถี่การจับหน้าลง (100ms = 10 FPS สำหรับการจับหน้า) แต่วิดีโอจะวิ่ง 60 FPS
+  
   const DETECT_INTERVAL = 100; 
 
   const isInferringRef = useRef(false);
   const lastInferTimeRef = useRef(0);
-  const INFER_INTERVAL = 200; // ทำนายอารมณ์ทุกๆ 200ms พอ
+  const INFER_INTERVAL = 200; 
 
   const [initStatus, setInitStatus] = useState("System Initializing...");
   const [isLoading, setIsLoading] = useState(true);
@@ -194,7 +194,7 @@ export default function Home() {
         videoRef.current.onloadedmetadata = async () => {
              await videoRef.current!.play();
              
-             // เตรียม Canvas เล็กสำหรับประมวลผล
+             
              if (!processCanvasRef.current) {
                 processCanvasRef.current = document.createElement("canvas");
              }
@@ -295,17 +295,17 @@ export default function Home() {
         canvas.height = video.videoHeight;
     }
 
-    // 1. วาด Video ลง UI (สำคัญที่สุดต้องลื่น)
+    
     ctx.drawImage(video, 0, 0);
 
     const now = performance.now();
 
-    // 2. ตรวจจับหน้า (ทำเมื่อถึงเวลาเท่านั้น)
+    
     if (now - lastDetectTimeRef.current > DETECT_INTERVAL) {
         lastDetectTimeRef.current = now;
 
-        // --- SUPER OPTIMIZATION: ย่อภาพให้เล็กมากๆ เพื่อความเร็ว ---
-        const processWidth = 160; // ขนาดเล็กแค่นี้ก็จับหน้าได้ เร็วกว่าเดิม 20-30 เท่า
+        
+        const processWidth = 160; 
         const scaleFactor = video.videoWidth / processWidth;
         const processHeight = Math.round(video.videoHeight / scaleFactor);
 
@@ -317,21 +317,18 @@ export default function Home() {
         const pCtx = pCanvas.getContext("2d", { willReadFrequently: true })!;
         pCtx.drawImage(video, 0, 0, processWidth, processHeight);
 
-        // --- OpenCV Process ---
+       
         try {
             const src = cv.imread(pCanvas);
             const gray = new cv.Mat();
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
             const faces = new cv.RectVector();
-            // scaleFactor 1.3 = ค้นหาหยาบๆ เร็วมากๆ
-            // minSize = 20x20 บนภาพเล็ก (ป้องกันการค้นหาจุดรบกวนเล็กๆ)
             const mSize = new cv.Size(20, 20);
             faceCascade.detectMultiScale(gray, faces, 1.3, 3, 0, mSize);
 
             if (faces.size() > 0) {
                 const r = faces.get(0);
-                // คูณ scale กลับไปเป็นขนาดจริง
                 cachedFaceRef.current = {
                     x: r.x * scaleFactor,
                     y: r.y * scaleFactor,
@@ -343,17 +340,17 @@ export default function Home() {
                 if(now - lastInferTimeRef.current > 2000) setEmotionData(null);
             }
 
-            // Cleanup ทันที
+            
             src.delete(); 
             gray.delete(); 
             faces.delete();
-            // mSize ไม่ต้อง delete ใน JS version บางตัว แต่เพื่อความชัวร์ปล่อยให้ GC จัดการหรือ delete ถ้า error
+            
         } catch(err) {
             console.warn("CV Error ignored to keep running");
         }
     }
 
-    // 3. วาด UI ทับ (ใช้ข้อมูลเก่าถ้ายังไม่ถึงรอบคำนวณใหม่)
+    
     if (cachedFaceRef.current) {
         const r = cachedFaceRef.current;
         
@@ -361,7 +358,7 @@ export default function Home() {
         ctx.strokeStyle = "#34d399";
         ctx.strokeRect(r.x, r.y, r.width, r.height);
 
-        // ส่ง AI (แยก Interval ต่างหาก)
+ 
         if (now - lastInferTimeRef.current > INFER_INTERVAL) {
             lastInferTimeRef.current = now;
             runInference(r);
@@ -399,17 +396,17 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#050505] text-slate-200 flex items-center justify-center p-4 md:p-8 font-sans overflow-hidden relative selection:bg-white/20">
-      {/* --- Ambient Background --- */}
+      
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,#1a1a1a,transparent_70%)]"></div>
         <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60vw] h-[60vw] rounded-full bg-gradient-to-r ${currentTheme.gradient} opacity-5 blur-[120px] transition-all duration-1000`}></div>
       </div>
 
-      {/* --- Main Interface Container --- */}
+      
       <div className="relative z-10 w-full max-w-6xl h-[80vh] md:h-[700px] flex flex-col md:flex-row bg-[#0a0a0a] rounded-[2rem] border border-white/5 shadow-[0_0_50px_-20px_rgba(0,0,0,0.7)] overflow-hidden ring-1 ring-white/5">
-        {/* === LEFT: Video Viewport === */}
+        
         <div className="relative flex-1 bg-black/40 h-full md:h-auto overflow-hidden group">
-          {/* Header Overlay */}
+          
           <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-start z-30 bg-gradient-to-b from-black/80 to-transparent">
             <div>
               <h1 className="text-lg font-bold text-white tracking-widest uppercase opacity-90">Aura Vision</h1>
@@ -420,7 +417,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Video Canvas & Placeholder */}
+         
           <div className="absolute inset-0 flex items-center justify-center">
             {!isCameraActive && (
               <div className="absolute inset-0 flex flex-col items-center justify-center z-20 p-8 text-center bg-black/60 backdrop-blur-sm">

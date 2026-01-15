@@ -167,17 +167,49 @@ export default function Home() {
 
   async function startCamera() {
     setErrorMsg(null);
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-    videoRef.current!.srcObject = stream;
-    await videoRef.current!.play();
-    setIsCameraActive(true);
-    loopIdRef.current = requestAnimationFrame(loop);
+    
+    // Cleanup old stream if exists
+    if (videoRef.current && videoRef.current.srcObject) {
+      const oldStream = videoRef.current.srcObject as MediaStream;
+      oldStream.getTracks().forEach(t => t.stop());
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }, 
+        audio: false 
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = async () => {
+             await videoRef.current!.play();
+             setIsCameraActive(true);
+             loopIdRef.current = requestAnimationFrame(loop);
+        };
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+         setErrorMsg("Camera is busy. Please close other apps.");
+      } else {
+         setErrorMsg(err.message || "Failed to start camera");
+      }
+      setIsCameraActive(false);
+    }
   }
 
   function stopCamera() {
     cancelAnimationFrame(loopIdRef.current);
-    const stream = videoRef.current?.srcObject as MediaStream;
-    stream?.getTracks().forEach(t => t.stop());
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(t => t.stop());
+      videoRef.current.srcObject = null;
+    }
     setIsCameraActive(false);
     setEmotionData(null);
   }
@@ -185,16 +217,23 @@ export default function Home() {
   /* ================= INFERENCE ================= */
 
   function preprocess(face: HTMLCanvasElement) {
-    const s = 64;
+    // ✅ FIX: เปลี่ยนขนาดจาก 64 เป็น 128 ตามที่ Model ต้องการ
+    const s = 128;
     const c = document.createElement("canvas");
     c.width = c.height = s;
-    c.getContext("2d")!.drawImage(face, 0, 0, s, s);
-    const d = c.getContext("2d")!.getImageData(0, 0, s, s).data;
+
+    // ✅ OPTIMIZE: เพิ่ม willReadFrequently เพื่อความลื่นไหล
+    const ctx = c.getContext("2d", { willReadFrequently: true })!;
+    
+    ctx.drawImage(face, 0, 0, s, s);
+    const d = ctx.getImageData(0, 0, s, s).data;
+    
     const f = new Float32Array(1 * 3 * s * s);
     let k = 0;
     for (let ch = 0; ch < 3; ch++)
       for (let i = 0; i < s * s; i++)
         f[k++] = d[i * 4 + ch] / 255;
+        
     return new ort.Tensor("float32", f, [1, 3, s, s]);
   }
 
@@ -206,16 +245,25 @@ export default function Home() {
       const c = document.createElement("canvas");
       c.width = rect.width;
       c.height = rect.height;
-      c.getContext("2d")!.drawImage(canvasRef.current!, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+      // ✅ OPTIMIZE: ใช้ willReadFrequently
+      c.getContext("2d", { willReadFrequently: true })!.drawImage(canvasRef.current!, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
 
       const input = preprocess(c);
       const out = await sessionRef.current!.run({ [sessionRef.current!.inputNames[0]]: input });
       const logits = out[sessionRef.current!.outputNames[0]].data as Float32Array;
 
+      // ✅ FIX: หาค่าสูงสุดและคำนวณ Softmax เพื่อให้ได้ % ที่ถูกต้อง (0-100)
       let max = 0;
       for (let i = 1; i < logits.length; i++) if (logits[i] > logits[max]) max = i;
 
-      setEmotionData({ label: classesRef.current![max], conf: logits[max] });
+      // คำนวณ Probability (Softmax)
+      const exps = Array.from(logits).map((l) => Math.exp(l));
+      const sum = exps.reduce((a, b) => a + b, 0);
+      const conf = exps[max] / sum;
+
+      setEmotionData({ label: classesRef.current![max], conf: conf });
+    } catch (e) {
+        console.error("Inference Error:", e);
     } finally {
       isInferringRef.current = false;
     }
@@ -228,22 +276,42 @@ export default function Home() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const faceCascade = faceCascadeRef.current;
-    if (!cv || !video || !canvas || !faceCascade) return;
+    
+    if (!cv || !video || !canvas || !faceCascade) {
+        loopIdRef.current = requestAnimationFrame(loop);
+        return;
+    }
+    if (video.paused || video.ended || !video.videoWidth) {
+        loopIdRef.current = requestAnimationFrame(loop);
+        return;
+    }
 
-    const ctx = canvas.getContext("2d")!;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    if (canvas.width !== video.videoWidth) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+    }
+    
+    // Draw video frame
     ctx.drawImage(video, 0, 0);
 
+    // Detect faces
     const src = cv.imread(canvas);
     const gray = new cv.Mat();
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
     const faces = new cv.RectVector();
-    faceCascade.detectMultiScale(gray, faces, 1.2, 5);
+    faceCascade.detectMultiScale(gray, faces, 1.1, 3, 0);
 
     if (faces.size() > 0) {
       const r = faces.get(0);
+      
+      // --- Draw Green Box ---
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#34d399";
+      ctx.strokeRect(r.x, r.y, r.width, r.height);
+      // ---------------------
+
       const now = performance.now();
       if (now - lastInferTimeRef.current > INFER_INTERVAL) {
         lastInferTimeRef.current = now;
@@ -269,6 +337,15 @@ export default function Home() {
         setErrorMsg(e.message);
       }
     })();
+
+    // Cleanup on unmount
+    return () => {
+        cancelAnimationFrame(loopIdRef.current);
+        if (videoRef.current && videoRef.current.srcObject) {
+            const stream = videoRef.current.srcObject as MediaStream;
+            stream.getTracks().forEach(t => t.stop());
+        }
+    };
   }, []);
 
   const currentTheme = getEmotionTheme(emotionData?.label ?? "");

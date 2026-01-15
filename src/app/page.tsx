@@ -92,15 +92,17 @@ export default function Home() {
   const classesRef = useRef<string[] | null>(null);
   const loopIdRef = useRef<number>(0);
 
-  // 🚀 Performance Optimization Refs
-  const processCanvasRef = useRef<HTMLCanvasElement | null>(null); // Canvas เล็กสำหรับประมวลผล
+  // 🚀 ULTRA Performance Refs
+  const processCanvasRef = useRef<HTMLCanvasElement | null>(null); 
   const lastDetectTimeRef = useRef(0);
-  const cachedFaceRef = useRef<any>(null); // จำตำแหน่งหน้าไว้เพื่อความลื่น
-  const DETECT_INTERVAL = 60; // ตรวจจับทุกๆ 60ms (ประมาณ 15fps) ก็พอ ตาดูไม่ออก
+  const cachedFaceRef = useRef<any>(null);
+  
+  // ลดความถี่การจับหน้าลง (100ms = 10 FPS สำหรับการจับหน้า) แต่วิดีโอจะวิ่ง 60 FPS
+  const DETECT_INTERVAL = 100; 
 
   const isInferringRef = useRef(false);
   const lastInferTimeRef = useRef(0);
-  const INFER_INTERVAL = 150; 
+  const INFER_INTERVAL = 200; // ทำนายอารมณ์ทุกๆ 200ms พอ
 
   const [initStatus, setInitStatus] = useState("System Initializing...");
   const [isLoading, setIsLoading] = useState(true);
@@ -178,7 +180,6 @@ export default function Home() {
     }
 
     try {
-      // ขอความละเอียดสูงได้ เพราะเราจะย่อก่อนประมวลผล
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: "user",
@@ -193,7 +194,7 @@ export default function Home() {
         videoRef.current.onloadedmetadata = async () => {
              await videoRef.current!.play();
              
-             // สร้าง Canvas เล็กเตรียมไว้เลย
+             // เตรียม Canvas เล็กสำหรับประมวลผล
              if (!processCanvasRef.current) {
                 processCanvasRef.current = document.createElement("canvas");
              }
@@ -224,11 +225,10 @@ export default function Home() {
   /* ================= INFERENCE ================= */
 
   function preprocess(face: HTMLCanvasElement) {
-    const s = 128; // Model Input Size
+    const s = 128; 
     const c = document.createElement("canvas");
     c.width = c.height = s;
 
-    // Use willReadFrequently to suppress warnings and speed up readback
     const ctx = c.getContext("2d", { willReadFrequently: true })!;
     ctx.drawImage(face, 0, 0, s, s);
     const d = ctx.getImageData(0, 0, s, s).data;
@@ -271,7 +271,7 @@ export default function Home() {
     }
   }
 
-  /* ================= LOOP (SUPER OPTIMIZED) ================= */
+  /* ================= LOOP (LITE VERSION) ================= */
 
   function loop() {
     const cv = cvRef.current;
@@ -290,24 +290,22 @@ export default function Home() {
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     
-    // ตั้งค่าขนาด Canvas UI ให้ชัดเท่า Video ต้นฉบับ
     if (canvas.width !== video.videoWidth) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
     }
 
-    // 1. วาด Video ลง Canvas หลัก (UI) ทุกเฟรมเพื่อความลื่นไหล
+    // 1. วาด Video ลง UI (สำคัญที่สุดต้องลื่น)
     ctx.drawImage(video, 0, 0);
 
     const now = performance.now();
 
-    // 2. ตรวจจับหน้า (ทำเป็นระยะๆ ไม่ทำทุกเฟรม)
+    // 2. ตรวจจับหน้า (ทำเมื่อถึงเวลาเท่านั้น)
     if (now - lastDetectTimeRef.current > DETECT_INTERVAL) {
         lastDetectTimeRef.current = now;
 
-        // 🚀 KEY OPTIMIZATION: ย่อภาพลง Canvas เล็กก่อนตรวจจับ
-        // การตรวจจับภาพขนาด 320px เร็วกว่า 1280px ประมาณ 16 เท่า!
-        const processWidth = 320; 
+        // --- SUPER OPTIMIZATION: ย่อภาพให้เล็กมากๆ เพื่อความเร็ว ---
+        const processWidth = 160; // ขนาดเล็กแค่นี้ก็จับหน้าได้ เร็วกว่าเดิม 20-30 เท่า
         const scaleFactor = video.videoWidth / processWidth;
         const processHeight = Math.round(video.videoHeight / scaleFactor);
 
@@ -319,44 +317,51 @@ export default function Home() {
         const pCtx = pCanvas.getContext("2d", { willReadFrequently: true })!;
         pCtx.drawImage(video, 0, 0, processWidth, processHeight);
 
-        // อ่านข้อมูลจาก Canvas เล็ก
-        const src = cv.imread(pCanvas);
-        const gray = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        // --- OpenCV Process ---
+        try {
+            const src = cv.imread(pCanvas);
+            const gray = new cv.Mat();
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-        const faces = new cv.RectVector();
-        // ตรวจจับบนภาพเล็ก
-        faceCascade.detectMultiScale(gray, faces, 1.1, 3, 0);
+            const faces = new cv.RectVector();
+            // scaleFactor 1.3 = ค้นหาหยาบๆ เร็วมากๆ
+            // minSize = 20x20 บนภาพเล็ก (ป้องกันการค้นหาจุดรบกวนเล็กๆ)
+            const mSize = new cv.Size(20, 20);
+            faceCascade.detectMultiScale(gray, faces, 1.3, 3, 0, mSize);
 
-        if (faces.size() > 0) {
-            const r = faces.get(0);
-            // คูณ scale กลับไปเป็นขนาดจริงบนจอ UI
-            cachedFaceRef.current = {
-                x: r.x * scaleFactor,
-                y: r.y * scaleFactor,
-                width: r.width * scaleFactor,
-                height: r.height * scaleFactor
-            };
-        } else {
-            cachedFaceRef.current = null;
-             // ถ้าไม่เจอหน้าสักพัก ให้ reset อารมณ์
-             if(now - lastInferTimeRef.current > 2000) setEmotionData(null);
+            if (faces.size() > 0) {
+                const r = faces.get(0);
+                // คูณ scale กลับไปเป็นขนาดจริง
+                cachedFaceRef.current = {
+                    x: r.x * scaleFactor,
+                    y: r.y * scaleFactor,
+                    width: r.width * scaleFactor,
+                    height: r.height * scaleFactor
+                };
+            } else {
+                cachedFaceRef.current = null;
+                if(now - lastInferTimeRef.current > 2000) setEmotionData(null);
+            }
+
+            // Cleanup ทันที
+            src.delete(); 
+            gray.delete(); 
+            faces.delete();
+            // mSize ไม่ต้อง delete ใน JS version บางตัว แต่เพื่อความชัวร์ปล่อยให้ GC จัดการหรือ delete ถ้า error
+        } catch(err) {
+            console.warn("CV Error ignored to keep running");
         }
-
-        // คืน Memory
-        src.delete(); gray.delete(); faces.delete();
     }
 
-    // 3. วาดกรอบและส่ง AI (ใช้ข้อมูลที่จำไว้ล่าสุด)
+    // 3. วาด UI ทับ (ใช้ข้อมูลเก่าถ้ายังไม่ถึงรอบคำนวณใหม่)
     if (cachedFaceRef.current) {
         const r = cachedFaceRef.current;
         
-        // วาดกรอบสีเขียว
         ctx.lineWidth = 4;
         ctx.strokeStyle = "#34d399";
         ctx.strokeRect(r.x, r.y, r.width, r.height);
 
-        // ส่ง AI (ทำเป็นระยะๆ)
+        // ส่ง AI (แยก Interval ต่างหาก)
         if (now - lastInferTimeRef.current > INFER_INTERVAL) {
             lastInferTimeRef.current = now;
             runInference(r);

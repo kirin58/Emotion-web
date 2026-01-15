@@ -94,7 +94,12 @@ export default function Home() {
 
   const isInferringRef = useRef(false);
   const lastInferTimeRef = useRef(0);
-  const INFER_INTERVAL = 150;
+  const INFER_INTERVAL = 150; // ความถี่ในการทำนายอารมณ์
+
+  // ✅ NEW: เพิ่มตัวแปรสำหรับลดความหน่วง
+  const lastDetectTimeRef = useRef(0);
+  const DETECT_INTERVAL = 80; // จับหน้าทุกๆ 80ms (ประมาณ 12 FPS) เพื่อไม่ให้หน่วง
+  const cachedFaceRectRef = useRef<any>(null); // จำตำแหน่งหน้าล่าสุดไว้
 
   const [initStatus, setInitStatus] = useState("System Initializing...");
   const [isLoading, setIsLoading] = useState(true);
@@ -144,7 +149,6 @@ export default function Home() {
   /* ================= ONNX ================= */
 
   async function loadModel() {
-    // 🔒 FIX สำหรับ Vercel + Browser
     ort.env.wasm.wasmPaths = "/onnx/";
     ort.env.wasm.numThreads = 1;
     ort.env.wasm.simd = false;
@@ -167,8 +171,6 @@ export default function Home() {
 
   async function startCamera() {
     setErrorMsg(null);
-    
-    // Cleanup old stream if exists
     if (videoRef.current && videoRef.current.srcObject) {
       const oldStream = videoRef.current.srcObject as MediaStream;
       oldStream.getTracks().forEach(t => t.stop());
@@ -212,19 +214,17 @@ export default function Home() {
     }
     setIsCameraActive(false);
     setEmotionData(null);
+    cachedFaceRectRef.current = null;
   }
 
   /* ================= INFERENCE ================= */
 
   function preprocess(face: HTMLCanvasElement) {
-    // ✅ FIX: เปลี่ยนขนาดจาก 64 เป็น 128 ตามที่ Model ต้องการ
-    const s = 128;
+    const s = 128; // Fixed size for Model
     const c = document.createElement("canvas");
     c.width = c.height = s;
 
-    // ✅ OPTIMIZE: เพิ่ม willReadFrequently เพื่อความลื่นไหล
     const ctx = c.getContext("2d", { willReadFrequently: true })!;
-    
     ctx.drawImage(face, 0, 0, s, s);
     const d = ctx.getImageData(0, 0, s, s).data;
     
@@ -245,18 +245,15 @@ export default function Home() {
       const c = document.createElement("canvas");
       c.width = rect.width;
       c.height = rect.height;
-      // ✅ OPTIMIZE: ใช้ willReadFrequently
       c.getContext("2d", { willReadFrequently: true })!.drawImage(canvasRef.current!, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
 
       const input = preprocess(c);
       const out = await sessionRef.current!.run({ [sessionRef.current!.inputNames[0]]: input });
       const logits = out[sessionRef.current!.outputNames[0]].data as Float32Array;
 
-      // ✅ FIX: หาค่าสูงสุดและคำนวณ Softmax เพื่อให้ได้ % ที่ถูกต้อง (0-100)
       let max = 0;
       for (let i = 1; i < logits.length; i++) if (logits[i] > logits[max]) max = i;
 
-      // คำนวณ Probability (Softmax)
       const exps = Array.from(logits).map((l) => Math.exp(l));
       const sum = exps.reduce((a, b) => a + b, 0);
       const conf = exps[max] / sum;
@@ -269,7 +266,7 @@ export default function Home() {
     }
   }
 
-  /* ================= LOOP ================= */
+  /* ================= LOOP (OPTIMIZED) ================= */
 
   function loop() {
     const cv = cvRef.current;
@@ -292,34 +289,55 @@ export default function Home() {
         canvas.height = video.videoHeight;
     }
     
-    // Draw video frame
+    // 1. วาด Video ทุกเฟรม (เพื่อให้ภาพลื่นไหล 60fps)
     ctx.drawImage(video, 0, 0);
 
-    // Detect faces
-    const src = cv.imread(canvas);
-    const gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    const now = performance.now();
+    
+    // 2. ตรวจจับใบหน้า (ทำแค่บางเฟรมเพื่อลดภาระ CPU)
+    if (now - lastDetectTimeRef.current > DETECT_INTERVAL) {
+        lastDetectTimeRef.current = now;
 
-    const faces = new cv.RectVector();
-    faceCascade.detectMultiScale(gray, faces, 1.1, 3, 0);
+        const src = cv.imread(canvas);
+        const gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    if (faces.size() > 0) {
-      const r = faces.get(0);
-      
-      // --- Draw Green Box ---
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = "#34d399";
-      ctx.strokeRect(r.x, r.y, r.width, r.height);
-      // ---------------------
+        const faces = new cv.RectVector();
+        // ใช้ scaleFactor 1.2 เพื่อให้เร็วขึ้น (แลกกับความละเอียดนิดหน่อย)
+        faceCascade.detectMultiScale(gray, faces, 1.2, 3, 0);
 
-      const now = performance.now();
-      if (now - lastInferTimeRef.current > INFER_INTERVAL) {
-        lastInferTimeRef.current = now;
-        runInference(r);
-      }
+        if (faces.size() > 0) {
+            // อัปเดตตำแหน่งหน้าล่าสุด
+            const r = faces.get(0);
+            cachedFaceRectRef.current = { x: r.x, y: r.y, width: r.width, height: r.height };
+        } else {
+            // ถ้าไม่เจอหน้า ให้เคลียร์ตำแหน่ง
+            cachedFaceRectRef.current = null;
+            // ถ้าไม่เจอหน้าก็รีเซ็ตค่าอารมณ์ด้วย
+            if(now - lastInferTimeRef.current > 2000) setEmotionData(null); 
+        }
+
+        // Cleanup Memory
+        src.delete(); 
+        gray.delete(); 
+        faces.delete();
     }
 
-    src.delete(); gray.delete(); faces.delete();
+    // 3. วาดกรอบสี่เหลี่ยม (ใช้ตำแหน่งจาก cache)
+    if (cachedFaceRectRef.current) {
+        const r = cachedFaceRectRef.current;
+        
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "#34d399";
+        ctx.strokeRect(r.x, r.y, r.width, r.height);
+
+        // Run Inference
+        if (now - lastInferTimeRef.current > INFER_INTERVAL) {
+            lastInferTimeRef.current = now;
+            runInference(r);
+        }
+    }
+
     loopIdRef.current = requestAnimationFrame(loop);
   }
 
@@ -338,7 +356,6 @@ export default function Home() {
       }
     })();
 
-    // Cleanup on unmount
     return () => {
         cancelAnimationFrame(loopIdRef.current);
         if (videoRef.current && videoRef.current.srcObject) {
